@@ -7,6 +7,7 @@ from scipy import io, stats
 import numpy as np
 from suite2p.extraction import dcnv
 from scipy import ndimage
+from sklearn.metrics import accuracy_score
 
 
 def add_exp(database, mname, expdate, blk):
@@ -335,14 +336,29 @@ class DprimeDecoder:
             ix2 = (-self.dprime_[self.train_exemplar] > self.threshold) * (iplane >= 10)
         spop_train = X[:, ix1, :].mean(1) - X[:, ix2, :].mean(1)
         spop_train = spop_train.reshape(2, -1)
-        self.clf_boundary_ = ((spop_train[0] + spop_train[1]) / 2).mean() #get boundary with train trials
+        y= np.concatenate((np.ones(spop_train.shape[1]),np.zeros(spop_train.shape[1])))
+        spop_train = spop_train.reshape(-1,1)
+        train_min = spop_train.min()
+        train_max = spop_train.max()
+        threshold = np.arange(train_min,train_max,0.0001)
+        trsh = []
+        scre = []
+        for t in threshold:
+            pred = spop_train>t
+            acc = accuracy_score(y,pred) * 100
+            trsh.append(t)
+            scre.append(acc)
+        trsh = np.array(trsh)
+        scre = np.array(scre)
+        amax = np.argmax(scre)
+        trsh[amax]
+        self.clf_boundary_ = trsh[amax] #get boundary with train trials
         return self
 
     def score(self):
         """
         Computes occuracy on test trials over average of repeats
         """
-        from sklearn.metrics import accuracy_score
 
         pred = np.mean(self.spop_, -1) > self.clf_boundary_
         y = np.concatenate((np.ones(self.samples_per_category), np.zeros(self.samples_per_category)))
