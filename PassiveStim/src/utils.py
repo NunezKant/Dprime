@@ -2,6 +2,7 @@
 utility functions for the analysis of the data
 """
 import os
+from pyrsistent import s
 from scipy import io, stats
 import numpy as np
 from suite2p.extraction import dcnv
@@ -302,8 +303,10 @@ class DprimeDecoder:
         DprimeDecoder.dprime_ = None
         DprimeDecoder.neurons_abvtresh_ = None
         DprimeDecoder.spop_ = None
+        DprimeDecoder.clf_boundary_ = None
+        DprimeDecoder.score_ = None
 
-    def fit(self, X):
+    def fit(self, X, iplane, zstack=2):
         """
         Trains with even trials
         """
@@ -312,16 +315,39 @@ class DprimeDecoder:
         self.dprime_ = (
             2
             * (
-                self.mu_[: self.samples_per_category]
-                - self.mu_[self.samples_per_category :]
+                self.mu_[:self.samples_per_category]
+                - self.mu_[self.samples_per_category:]
             )
             / (
-                self.sd_[: self.samples_per_category]
-                + self.sd_[self.samples_per_category :]
+                self.sd_[:self.samples_per_category]
+                + self.sd_[self.samples_per_category:]
             )
         )
         self.neurons_abvtresh_ = self.dprime_[self.train_exemplar] > self.threshold
+
+        if zstack == 1:
+            ix1 = (self.dprime_[self.train_exemplar] > self.threshold) * (iplane < 10)
+            ix2 = (-self.dprime_[self.train_exemplar] > self.threshold) * (iplane < 10)
+        else:
+            ix1 = (self.dprime_[self.train_exemplar] > self.threshold) * (
+                iplane >= 10
+            )  # the last ten ROIs are in the top plane
+            ix2 = (-self.dprime_[self.train_exemplar] > self.threshold) * (iplane >= 10)
+        spop_train = X[:, ix1, :].mean(1) - X[:, ix2, :].mean(1)
+        spop_train = spop_train.reshape(2, -1)
+        self.clf_boundary_ = ((spop_train[0] + spop_train[1]) / 2).mean() #get boundary with train trials
         return self
+
+    def score(self):
+        """
+        Computes occuracy on test trials over average of repeats
+        """
+        from sklearn.metrics import accuracy_score
+
+        pred = np.mean(self.spop_, -1) > self.clf_boundary_
+        y = np.concatenate((np.ones(self.samples_per_category), np.zeros(self.samples_per_category)))
+        self.score_ = accuracy_score(y, pred) * 100
+        return self.score_
 
     def test(self, X, iplane, zstack=1):
         """
