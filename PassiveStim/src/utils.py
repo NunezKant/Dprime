@@ -306,6 +306,7 @@ class DprimeDecoder:
         DprimeDecoder.spop_ = None
         DprimeDecoder.clf_boundary_ = None
         DprimeDecoder.score_ = None
+        DprimeDecoder.neurons_blwtresh_ = None 
 
     def fit(self, X, iplane, zstack=2):
         """
@@ -325,7 +326,7 @@ class DprimeDecoder:
             )
         )
         self.neurons_abvtresh_ = self.dprime_[self.train_exemplar] > self.threshold
-
+        self.neurons_blwtresh_ = -self.dprime_[self.train_exemplar] > self.threshold
         if zstack == 1:
             ix1 = (self.dprime_[self.train_exemplar] > self.threshold) * (iplane < 10)
             ix2 = (-self.dprime_[self.train_exemplar] > self.threshold) * (iplane < 10)
@@ -355,14 +356,21 @@ class DprimeDecoder:
         self.clf_boundary_ = trsh[amax] #get boundary with train trials
         return self
 
-    def score(self):
+    def score(self, avg_test_reps = True):
         """
         Computes occuracy on test trials over average of repeats
         """
+        if avg_test_reps:
+            pred = np.mean(self.spop_, -1) > self.clf_boundary_
+            y = np.concatenate((np.ones(self.samples_per_category), np.zeros(self.samples_per_category)))
+            self.score_ = accuracy_score(y, pred) * 100
+        else:
+            pred = self.spop_ > self.clf_boundary_
+            pred = pred.reshape(-1,1)
+            y = np.concatenate((np.ones(int(pred.shape[0]/2)), np.zeros(int(pred.shape[0]/2))))
+            self.score_ = accuracy_score(y, pred) * 100
 
-        pred = np.mean(self.spop_, -1) > self.clf_boundary_
-        y = np.concatenate((np.ones(self.samples_per_category), np.zeros(self.samples_per_category)))
-        self.score_ = accuracy_score(y, pred) * 100
+
         return self.score_
 
     def test(self, X, iplane, zstack=1):
