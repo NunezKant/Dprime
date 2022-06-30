@@ -295,7 +295,7 @@ class DprimeDecoder:
     Implements a naive decoder based on the dprime separation of the neuron responses
     """
 
-    def __init__(self, samples_per_category=4, train_exemplar=0, threshold=0.5):
+    def __init__(self, samples_per_category=4, train_exemplar=0, threshold=0.5, decisionrule="optimal"):
         DprimeDecoder.threshold = threshold
         DprimeDecoder.samples_per_category = samples_per_category
         DprimeDecoder.train_exemplar = train_exemplar
@@ -307,6 +307,31 @@ class DprimeDecoder:
         DprimeDecoder.clf_boundary_ = None
         DprimeDecoder.score_ = None
         DprimeDecoder.neurons_blwtresh_ = None 
+        DprimeDecoder.decisionrule = decisionrule
+
+    def middle_rule(self,spop_train):
+        spop_train = spop_train.reshape(2,-1)
+        trsh = (spop_train[0].min()+spop_train[1].max())/2
+        #trsh = ((spop_train[0]+spop_train[1])/2).mean()
+        return trsh
+
+    def optimal_solution(self,spop_train):
+        spop_train = spop_train.reshape(-1,1)
+        y= np.concatenate((np.ones(int(spop_train.shape[0]/2)),np.zeros(int(spop_train.shape[0]/2))))
+        train_min = spop_train.min()
+        train_max = spop_train.max()
+        threshold = np.arange(train_min,train_max,0.0001)
+        trsh = []
+        scre = []
+        for t in threshold:
+            pred = spop_train>t
+            acc = accuracy_score(y,pred) * 100
+            trsh.append(t)
+            scre.append(acc)
+        trsh = np.array(trsh)
+        scre = np.array(scre)
+        amax = np.argmax(scre)
+        return trsh[amax]
 
     def fit(self, X, iplane, zstack=2):
         """
@@ -336,25 +361,17 @@ class DprimeDecoder:
             )  # the last ten ROIs are in the top plane
             ix2 = (-self.dprime_[self.train_exemplar] > self.threshold) * (iplane >= 10)
         spop_train = X[:, ix1, :].mean(1) - X[:, ix2, :].mean(1)
-        spop_train = spop_train.reshape(2, -1)
-        y= np.concatenate((np.ones(spop_train.shape[1]),np.zeros(spop_train.shape[1])))
+        #spop_train = spop_train.reshape(2, -1)
+        #y= np.concatenate((np.ones(spop_train.shape[1]),np.zeros(spop_train.shape[1])))
+        spop_train = np.concatenate((spop_train[self.train_exemplar,:],spop_train[self.train_exemplar+self.samples_per_category,:]))
         spop_train = spop_train.reshape(-1,1)
-        train_min = spop_train.min()
-        train_max = spop_train.max()
-        threshold = np.arange(train_min,train_max,0.0001)
-        trsh = []
-        scre = []
-        for t in threshold:
-            pred = spop_train>t
-            acc = accuracy_score(y,pred) * 100
-            trsh.append(t)
-            scre.append(acc)
-        trsh = np.array(trsh)
-        scre = np.array(scre)
-        amax = np.argmax(scre)
-        trsh[amax]
-        self.clf_boundary_ = trsh[amax] #get boundary with train trials
+        if self.decisionrule == "optimal":
+            self.clf_boundary_ = self.optimal_solution(spop_train)
+        else: 
+            self.clf_boundary_ = self.middle_rule(spop_train) #get boundary with train trials
         return self
+
+
 
     def score(self, avg_test_reps = True):
         """
@@ -563,3 +580,30 @@ def load_neurons(db, dual_plane=True, baseline=True):
     print("total neurons %d" % len(spks))
 
     return spks, xpos, ypos, iplane, stat
+
+def get_stim_class_and_samples_ix(subset_stim, n_categories=8,samples_per_cat=4):
+    """
+    Gets the samples and repeats for the specified number of categories, and samples per category
+    also returns the cats_idx containing the idx from a new category starts
+    """
+    total_samples = n_categories * samples_per_cat
+    _, nc = np.unique(subset_stim, return_counts = True)
+    nc = nc[:total_samples]
+    nreps = np.min(nc)
+    for exemplar in range(total_samples):
+        if exemplar == 0:
+            stim_idx = np.expand_dims(np.where(subset_stim==exemplar+1)[0][:nreps],axis=0)
+        else:
+            stim_idx= np.append(stim_idx, np.expand_dims(np.where(subset_stim==exemplar+1)[0][:nreps],axis=0),axis=0)
+    cats_idx = np.arange(0, total_samples, samples_per_cat)
+    print(f"{cats_idx.shape[0]} categories, {stim_idx.shape[0]} exemplars, {stim_idx.shape[1]} repeats")
+    return cats_idx, stim_idx
+
+def select_neurons_by_stimsubset(neurons_atframes, stim_idx, cats_idx, category_tostart, exemplars_to_take):
+    """
+    Returns the neurons at a given stim start category, and the following n stim exemplars
+    """
+    selected_neurons = np.zeros((exemplars_to_take, neurons_atframes.shape[0], stim_idx.shape[1]))
+    for exemplar in range(exemplars_to_take):
+        selected_neurons[exemplar] = neurons_atframes[:, stim_idx[cats_idx[category_tostart]+exemplar]]
+    return selected_neurons
