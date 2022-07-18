@@ -590,7 +590,7 @@ def load_neurons(db, dual_plane=True, baseline=True):
 
     print("total neurons %d" % len(spks))
 
-    return spks, xpos, ypos, iplane, stat
+    return spks, xpos, ypos, iplane, stat, ops
 
 def get_stim_class_and_samples_ix(subset_stim, n_categories=8,samples_per_cat=4):
     """
