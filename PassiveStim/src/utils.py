@@ -371,21 +371,32 @@ class DprimeDecoder:
             self.clf_boundary_ = self.middle_rule(spop_train) #get boundary with train trials
         return self
 
-
-
-    def score(self, avg_test_reps = True):
+    def score(self, avg_test_reps = True, AFC = False):
         """
         Computes occuracy on test trials over average of repeats
         """
         if avg_test_reps:
-            pred = np.mean(self.spop_, -1) > self.clf_boundary_
-            y = np.concatenate((np.ones(self.samples_per_category), np.zeros(self.samples_per_category)))
-            self.score_ = accuracy_score(y, pred) * 100
+            s = np.mean(self.spop_, -1)
+            if AFC:
+                s = s.reshape(2,-1)
+                pred = s[0]>s[1]
+                y = np.ones(s.shape[1])
+                self.score_ = accuracy_score(y, pred) * 100
+            else:
+                y = np.concatenate((np.ones(self.samples_per_category), np.zeros(self.samples_per_category)))
+                pred = np.mean(self.spop_, -1) > self.clf_boundary_
+                self.score_ = accuracy_score(y, pred) * 100
         else:
-            pred = self.spop_ > self.clf_boundary_
-            pred = pred.reshape(-1,1)
-            y = np.concatenate((np.ones(int(pred.shape[0]/2)), np.zeros(int(pred.shape[0]/2))))
-            self.score_ = accuracy_score(y, pred) * 100
+            if AFC: 
+                s = self.spop_.reshape(2,-1)
+                pred = s[0]>s[1]
+                y = np.ones(s.shape[1])
+                self.score_ = accuracy_score(y, pred) * 100
+            else:
+                pred = self.spop_ > self.clf_boundary_
+                pred = pred.reshape(-1,1)
+                y = np.concatenate((np.ones(int(pred.shape[0]/2)), np.zeros(int(pred.shape[0]/2))))
+                self.score_ = accuracy_score(y, pred) * 100
 
 
         return self.score_
