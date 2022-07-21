@@ -307,6 +307,7 @@ class DprimeDecoder:
         DprimeDecoder.clf_boundary_ = None
         DprimeDecoder.score_ = None
         DprimeDecoder.neurons_blwtresh_ = None 
+        DprimeDecoder.neurons_with_var_ = None
         DprimeDecoder.decisionrule = decisionrule
 
     def middle_rule(self,spop_train):
@@ -339,17 +340,21 @@ class DprimeDecoder:
         """
         self.mu_ = X.mean(-1)
         self.sd_ = X.std(-1)
-        self.dprime_ = (
-            2
-            * (
+        mean_diff = (
                 self.mu_[:self.samples_per_category]
                 - self.mu_[self.samples_per_category:]
             )
-            / (
+        avg_sd = (
                 self.sd_[:self.samples_per_category]
                 + self.sd_[self.samples_per_category:]
-            )
-        )
+            )/2
+        neurons_wo_variance = np.unique(np.where(avg_sd==0)[1])
+        self.neurons_with_var_ = [neuron for neuron in range(X.shape[1]) if neuron not in neurons_wo_variance]
+        mean_diff = mean_diff[:,self.neurons_with_var_]
+        avg_sd = avg_sd[:,self.neurons_with_var_]
+        iplane = iplane[self.neurons_with_var_]
+        X=X[:,self.neurons_with_var_,:]
+        self.dprime_ = mean_diff/avg_sd
         self.neurons_abvtresh_ = self.dprime_[self.train_exemplar] > self.threshold
         self.neurons_blwtresh_ = -self.dprime_[self.train_exemplar] > self.threshold
         if zstack == 1:
@@ -361,8 +366,6 @@ class DprimeDecoder:
             )  # the last ten ROIs are in the top plane
             ix2 = (-self.dprime_[self.train_exemplar] > self.threshold) * (iplane >= 10)
         spop_train = X[:, ix1, :].mean(1) - X[:, ix2, :].mean(1)
-        #spop_train = spop_train.reshape(2, -1)
-        #y= np.concatenate((np.ones(spop_train.shape[1]),np.zeros(spop_train.shape[1])))
         spop_train = np.concatenate((spop_train[self.train_exemplar,:],spop_train[self.train_exemplar+self.samples_per_category,:]))
         spop_train = spop_train.reshape(-1,1)
         if self.decisionrule == "optimal":
@@ -401,10 +404,12 @@ class DprimeDecoder:
 
         return self.score_
 
-    def test(self, X, iplane, zstack=1):
+    def test(self, X, iplane, zstack=2):
         """
         Tests with odd trials
         """
+        iplane = iplane[self.neurons_with_var_]
+        X=X[:,self.neurons_with_var_,:]
         if zstack == 1:
             ix1 = (self.dprime_[self.train_exemplar] > self.threshold) * (iplane < 10)
             ix2 = (-self.dprime_[self.train_exemplar] > self.threshold) * (iplane < 10)
@@ -594,8 +599,10 @@ def load_neurons(db, dual_plane=True, baseline=True):
 
 def get_stim_class_and_samples_ix(subset_stim, n_categories=8,samples_per_cat=4):
     """
-    Gets the samples and repeats for the specified number of categories, and samples per category
-    also returns the cats_idx containing the idx from a new category starts
+    Gets the idx for each repeat of each exemplar, for the specified categories.
+
+    stim_idx is a vector containing the idx of each repeat of each exemplar stimuli (exemplar, repeats)
+    cats_idx is a vector with the idx that starts a new category
     """
     total_samples = n_categories * samples_per_cat
     _, nc = np.unique(subset_stim, return_counts = True)
@@ -618,3 +625,56 @@ def select_neurons_by_stimsubset(neurons_atframes, stim_idx, cats_idx, category_
     for exemplar in range(exemplars_to_take):
         selected_neurons[exemplar] = neurons_atframes[:, stim_idx[cats_idx[category_tostart]+exemplar]]
     return selected_neurons
+
+def get_neurons_by_categories(neurons_atframes, stim_idx, cats, selected_categories, exemplars_per_cat=4):
+    """
+    Returns the neuron response for each exemplar of the selected categories
+
+    Parameters:
+    -----------
+
+    selected_categories: tuple
+    
+    tuple of the selected categories
+    """
+
+    selected_neurons = np.zeros((exemplars_per_cat*len(selected_categories), neurons_atframes.shape[0], stim_idx.shape[1]))
+    id_exemplar = 0 
+    for category in selected_categories:
+        cat = cats[category]
+        for exemplar in range(exemplars_per_cat):
+            selected_neurons[id_exemplar] = neurons_atframes[:, stim_idx[cat+exemplar]]
+            id_exemplar+=1
+    return selected_neurons
+
+def get_only_neurons_with_var(neurons_at_cats,exemplars_per_cat=4, verbose = False):
+
+    """
+    Elimininate neurons that dont have any variance for a given category
+
+    Parameters:
+    -----------
+
+    neurons_at_cats: array (exemplars,neurons)
+        neuronal responses for each exemplar
+
+    At grabing the number of exemplars per category we filter for neurons without variance in a category
+
+    Returns:
+    --------
+
+    Filtered population and idx of neurons with var for those categories
+
+    """
+    var_over_reps = neurons_at_cats.std(-1)
+    cat1_no_var = np.unique(np.where(var_over_reps[:exemplars_per_cat]==0)[1])
+    cat2_no_var = np.unique(np.where(var_over_reps[exemplars_per_cat:]==0)[1])
+    neurons_wo_variance = np.concatenate([cat1_no_var,cat2_no_var]) 
+    neurons_with_var_ = [neuron for neuron in range(neurons_at_cats.shape[1]) if neuron not in neurons_wo_variance]
+    if verbose == True:
+        print(f"Neurons without variance:")
+        print("-------------------------")
+        print(f"category 1: {len(cat1_no_var)}")
+        print(f"category 2: {len(cat2_no_var)}")
+    return neurons_at_cats[:,neurons_with_var_,:], neurons_with_var_
+
