@@ -8,6 +8,8 @@ import numpy as np
 from suite2p.extraction import dcnv
 from scipy import ndimage
 from sklearn.metrics import accuracy_score
+from itertools import combinations
+from tqdm import tqdm
 
 
 def add_exp(database, mname, expdate, blk):
@@ -160,7 +162,7 @@ def deconvolve(root, ops):
 
         print(f"plane {n}, neurons: {len(xpos0)}")
 
-    print(f"total neurons {len(spks)}")
+    print(f"total neurons: {len(spks)}")
 
     xpos = xpos / 0.75
     ypos = ypos / 0.5
@@ -423,7 +425,7 @@ class DprimeDecoder:
         return self.spop_
 
 
-def load_exp_info(db):
+def load_exp_info(db, timeline_block=None):
     """
     Loads the experiment info from the database
 
@@ -431,12 +433,17 @@ def load_exp_info(db):
     ----------
     db : dict
         Dictionary with the database entries
+    timeline_block : int 
+        Specifies the timeline block to choose
     Returns:
     ----------
     Timeline : dict
         Dictionary with the experiment info
     """
-    mname, datexp, blk = db["mname"], db["datexp"], db["blk"]
+    if timeline_block is None:
+        mname, datexp, blk = db["mname"], db["datexp"], db["blk"]
+    else:
+        mname, datexp, blk = db["mname"], db["datexp"], str(timeline_block)
     root = os.path.join("Z:/data/PROC", mname, datexp, blk)
 
     fname = "Timeline_%s_%s_%s" % (mname, datexp, blk)
@@ -547,14 +554,14 @@ def load_neurons(db, dual_plane=True, baseline=True):
         tlags = tlags.flatten()
     else:
         tlags = np.linspace(0.2, -0.8, ops["nplanes"] + 1)[:-1]
-    print(tlags.shape)
+    print(f"planes: {tlags.shape[0]}")
 
     spks = np.zeros((0, ops["nframes"]), np.float32)
     stat = np.zeros((0,))
     iplane = np.zeros((0,))
     xpos, ypos = np.zeros((0,)), np.zeros((0,))
 
-    for n in range(ops["nplanes"]):
+    for n in tqdm(range(ops["nplanes"])):
         ops = np.load(
             os.path.join(root, "suite2p", "plane%d" % n, "ops.npy"), allow_pickle=True
         ).item()
@@ -591,13 +598,13 @@ def load_neurons(db, dual_plane=True, baseline=True):
         iplane = np.concatenate((iplane, n * np.ones(len(stat0),)))
         stat = np.concatenate((stat, stat0), axis=0)
 
-        print("plane %d, " % n, "neurons: %d" % len(xpos0))
+        #print("plane %d, " % n, "neurons: %d" % len(xpos0))
 
-    print("total neurons %d" % len(spks))
+    print("total neurons: %d" % len(spks))
 
     return spks, xpos, ypos, iplane, stat, ops
 
-def get_stim_class_and_samples_ix(subset_stim, n_categories=8,samples_per_cat=4):
+def get_stim_class_and_samples_ix(subset_stim, n_categories=8, samples_per_cat=4, nrep=None):
     """
     Gets the idx for each repeat of each exemplar, for the specified categories.
 
@@ -608,6 +615,9 @@ def get_stim_class_and_samples_ix(subset_stim, n_categories=8,samples_per_cat=4)
     _, nc = np.unique(subset_stim, return_counts = True)
     nc = nc[:total_samples]
     nreps = np.min(nc)
+    if nrep is not None:
+        assert nreps>nrep, "more specified reps than effective reps"
+        nreps = nrep
     for exemplar in range(total_samples):
         if exemplar == 0:
             stim_idx = np.expand_dims(np.where(subset_stim==exemplar+1)[0][:nreps],axis=0)
@@ -615,7 +625,7 @@ def get_stim_class_and_samples_ix(subset_stim, n_categories=8,samples_per_cat=4)
             stim_idx= np.append(stim_idx, np.expand_dims(np.where(subset_stim==exemplar+1)[0][:nreps],axis=0),axis=0)
     cats_idx = np.arange(0, total_samples, samples_per_cat)
     print(f"{cats_idx.shape[0]} categories, {stim_idx.shape[0]} exemplars, {stim_idx.shape[1]} repeats")
-    return cats_idx, stim_idx
+    return cats_idx, stim_idx, nreps
 
 def select_neurons_by_stimsubset(neurons_atframes, stim_idx, cats_idx, category_tostart, exemplars_to_take):
     """
@@ -678,3 +688,120 @@ def get_only_neurons_with_var(neurons_at_cats,exemplars_per_cat=4, verbose = Fal
         print(f"category 2: {len(cat2_no_var)}")
     return neurons_at_cats[:,neurons_with_var_,:], neurons_with_var_
 
+def get_generalization_margings(spops, n_pairs = 28, n_textures = 4):
+    """
+    Gets the generalization margins for each posible training texture, only works for spop averaged over reapeats.
+    """
+    generalization_margings = np.empty((n_pairs,n_textures), dtype=object)
+    for pair in range(n_pairs):
+        for train_tex in range(n_textures):
+            margins = spops[pair,train_tex][0] - spops[pair,train_tex][1]
+            margins = np.round(margins,4)
+            train_marging = margins[train_tex]
+            margin_ratio = margins/train_marging
+            generalization_margings[pair,train_tex] = margin_ratio
+    return generalization_margings
+
+def get_margin_per_category(margins,category_pair,avg=True):
+    """
+    Retrieves the margins for a given category_pair, or if avg=True it returns the avg marging for each training texture.
+    """
+    margins_atcatpair = np.concatenate(margins[category_pair,:],axis=0).reshape(4,4)
+    if avg:
+        margins_atcatpair[margins_atcatpair==1] = np.nan
+        margins_atcatpair = np.nanmean(margins_atcatpair,axis=1)
+    return margins_atcatpair
+
+def categorypairs_parser(cat_dict,pairs):
+    """
+    Simple parser between category indexes and names.
+    """
+    category_pairs = []
+    for pair in pairs:
+        category_pairs.append(f"{cat_dict[str(pair[0])]}/{cat_dict[str(pair[1])]}")
+    return category_pairs
+
+def PairwiseDprimeDecoder(neurons_atframes, stim_idx, iplane, cats, n_categories = 8, n_samples = 4, layer = 1 , avg_reps = False):
+    pairs = list(combinations(np.arange(n_categories), 2)) 
+    train_textures = np.arange(n_samples)
+    categories_dict = {
+    "0":"leaves",
+    "1":"circles",
+    "2":"dryland",
+    "3":"rocks",
+    "4":"tiles",
+    "5":"squares",
+    "6":"round leaves",
+    "7":"paved"}
+    spops = np.empty((len(pairs),n_samples), dtype=object)
+    accurracy = []
+    for ix_pair, pair in enumerate(pairs):
+        #print(f"******************category pair: {categories_dict[str(pair[0])]}/{categories_dict[str(pair[1])]}***********************")
+        neurons_at_cats = get_neurons_by_categories(neurons_atframes, stim_idx, cats, selected_categories = pair, exemplars_per_cat=n_samples)
+        Xtrain = neurons_at_cats[:,:,::2]
+        Xtest = neurons_at_cats[:,:,1::2]
+        Xtrain_with_var, idx_neurons_with_var_ = get_only_neurons_with_var(Xtrain,exemplars_per_cat=n_samples) # Only even repeats for training
+        Xtest_with_var = Xtest[:,idx_neurons_with_var_,:]
+        Xtrain_varneurons_iplane = iplane[idx_neurons_with_var_]
+        mu_ = Xtrain_with_var.mean(-1)
+        sd_ = Xtrain_with_var.std(-1)
+        mean_diff = (mu_[:n_samples] - mu_[n_samples:])
+        avg_sd = (sd_[:n_samples]+sd_[n_samples:])/2
+        dprime_ = mean_diff/avg_sd
+        #print("*************TRAINING**************")
+        for train_texture in train_textures:
+            if layer == 2: 
+                neurons_abvtresh_ = (dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane < 10) #Dprime threshold
+                neurons_blwtresh_ = (-dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane < 10)
+            elif layer == 1:
+                neurons_abvtresh_ = (dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane >= 10) #Dprime threshold
+                neurons_blwtresh_ = (-dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane >= 10)
+            #print(f"neurons abv: {(neurons_abvtresh_).sum()} & blw: {(neurons_blwtresh_).sum()} thresh")
+            spop_ = Xtest_with_var[:, neurons_abvtresh_, :].mean(1) - Xtest_with_var[:,neurons_blwtresh_, :].mean(1)
+            #scoring
+            if avg_reps:
+                spop_avg = spop_.mean(-1)
+                s = spop_avg.reshape(2,-1)
+            else:
+                s = spop_.reshape(2,-1)
+            spops[ix_pair,train_texture] = s
+            pred = s[0]>s[1]
+            y = np.ones(s.shape[1])
+            score_ = accuracy_score(y, pred) * 100
+            #print(f"training pair: {train_texture}, accuracy: {score_}")
+            accurracy.append(score_)
+    accurracy = np.array(accurracy).reshape(len(pairs),n_samples)
+    return accurracy, pairs, spops, categories_dict
+
+def build_sessions(exp_db,frames_per_folder_idx, block_list, dual_plane=True, baseline=True):
+
+    """
+    from exp_db, it builds a Sessions class list, each class, contains all the relevant information from that session.
+
+    exp_db: list , list of experiments
+    frames_per_folder_idx: list, in case of two exp in the same session, specifies the frames corresponding to which folder.
+
+    block_list: list of block to pick the timeline file
+    
+    """
+    class Session:
+        pass
+    Sessions = []
+    frames_per_folder_atsession = frames_per_folder_idx
+    for exp, frms_per_folder,tmline_block in zip(range(len(exp_db)),frames_per_folder_atsession, block_list):
+        print(f"Session: {exp}")
+        session = Session()
+        session.name = exp_db[exp]["mname"]
+        session.date = exp_db[exp]["datexp"]
+        session.block = exp_db[exp]["blk"]
+        session.timeline   = load_exp_info(exp_db[exp], timeline_block= tmline_block)
+        session.spks, session.xpos, session.ypos, session.iplane, session.stat, session.ops = load_neurons(exp_db[exp], dual_plane=dual_plane, baseline=baseline)
+        FRAMES_PASSIVE = session.ops["frames_per_folder"][frms_per_folder]
+        if frms_per_folder == 0:
+            session.spks = session.spks[:,:FRAMES_PASSIVE]
+        elif frms_per_folder == 1:
+            session.spks = session.spks[:,FRAMES_PASSIVE:]
+        session.neurons_atframes, session.subset_stim = get_neurons_atframes(session.timeline,session.spks)
+        session.avg_response, session.csig = get_tuned_neurons(session.neurons_atframes, session.subset_stim)
+        Sessions.append(session)
+    return Sessions
