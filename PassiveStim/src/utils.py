@@ -734,6 +734,7 @@ def PairwiseDprimeDecoder(neurons_atframes, stim_idx, iplane, cats, n_categories
     "6":"round leaves",
     "7":"paved"}
     spops = np.empty((len(pairs),n_samples), dtype=object)
+    selected_neurons = np.empty((len(pairs),n_samples), dtype=object)
     accurracy = []
     for ix_pair, pair in enumerate(pairs):
         #print(f"******************category pair: {categories_dict[str(pair[0])]}/{categories_dict[str(pair[1])]}***********************")
@@ -757,6 +758,7 @@ def PairwiseDprimeDecoder(neurons_atframes, stim_idx, iplane, cats, n_categories
                 neurons_abvtresh_ = (dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane >= 10) #Dprime threshold
                 neurons_blwtresh_ = (-dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane >= 10)
             #print(f"neurons abv: {(neurons_abvtresh_).sum()} & blw: {(neurons_blwtresh_).sum()} thresh")
+            dprime_neurons = np.concatenate([np.where(neurons_abvtresh_==1)[0],np.where(neurons_blwtresh_==1)[0]])
             spop_ = Xtest_with_var[:, neurons_abvtresh_, :].mean(1) - Xtest_with_var[:,neurons_blwtresh_, :].mean(1)
             #scoring
             if avg_reps:
@@ -770,8 +772,9 @@ def PairwiseDprimeDecoder(neurons_atframes, stim_idx, iplane, cats, n_categories
             score_ = accuracy_score(y, pred) * 100
             #print(f"training pair: {train_texture}, accuracy: {score_}")
             accurracy.append(score_)
+            selected_neurons[ix_pair,train_texture] = dprime_neurons
     accurracy = np.array(accurracy).reshape(len(pairs),n_samples)
-    return accurracy, pairs, spops, categories_dict
+    return accurracy, pairs, spops, categories_dict, selected_neurons
 
 def build_sessions(exp_db,frames_per_folder_idx, block_list, dual_plane=True, baseline=True):
 
@@ -788,7 +791,7 @@ def build_sessions(exp_db,frames_per_folder_idx, block_list, dual_plane=True, ba
         pass
     Sessions = []
     frames_per_folder_atsession = frames_per_folder_idx
-    for exp, frms_per_folder,tmline_block in zip(range(len(exp_db)),frames_per_folder_atsession, block_list):
+    for exp, frms_per_folder, tmline_block in zip(range(len(exp_db)),frames_per_folder_atsession, block_list):
         print(f"Session: {exp}")
         session = Session()
         session.name = exp_db[exp]["mname"]
@@ -805,3 +808,50 @@ def build_sessions(exp_db,frames_per_folder_idx, block_list, dual_plane=True, ba
         session.avg_response, session.csig = get_tuned_neurons(session.neurons_atframes, session.subset_stim)
         Sessions.append(session)
     return Sessions
+
+def add_sessions(Sessions,exp_db,frames_per_folder_idx, block_list, dual_plane=True, baseline=True):
+    """
+    Appends sessions that were added to axp_db after builiding the sessions
+    """
+    class Session:
+        pass
+    n_sess_loaded = len(Sessions)
+    total_sessions = len(exp_db)
+    sessions_to_add = np.arange(n_sess_loaded,total_sessions)
+    frames_per_folder_atsession = frames_per_folder_idx
+    for exp, frms_per_folder, tmline_block in zip(sessions_to_add,frames_per_folder_atsession, block_list):
+        print(f"Session: {exp}")
+        session = Session()
+        session.name = exp_db[exp]["mname"]
+        session.date = exp_db[exp]["datexp"]
+        session.block = exp_db[exp]["blk"]
+        session.timeline   = load_exp_info(exp_db[exp], timeline_block= tmline_block)
+        session.spks, session.xpos, session.ypos, session.iplane, session.stat, session.ops = load_neurons(exp_db[exp], dual_plane=dual_plane, baseline=baseline)
+        FRAMES_PASSIVE = session.ops["frames_per_folder"][frms_per_folder]
+        if frms_per_folder == 0:
+            session.spks = session.spks[:,:FRAMES_PASSIVE]
+        elif frms_per_folder == 1:
+            session.spks = session.spks[:,FRAMES_PASSIVE:]
+        session.neurons_atframes, session.subset_stim = get_neurons_atframes(session.timeline,session.spks)
+        session.avg_response, session.csig = get_tuned_neurons(session.neurons_atframes, session.subset_stim)
+        Sessions.append(session)
+    return Sessions
+
+def get_generalization_neurons(SessionsList, n_pairs=28, n_layers=2):
+    """
+    Gets neurons that got selected by dprimedecoder regardless the training pair and the category pair
+    """
+    n_sesions = len(SessionsList)
+    ovrl_gen_neu_per_session = []
+    generalization_neurons_per_catpair = np.empty((n_layers,n_pairs), dtype=object)
+    for sess in range(n_sesions):
+        overall_gen_neurons = np.empty((n_layers), dtype=object)
+        for cat_pair in range(n_pairs):
+            for layer in range(n_layers):
+                neurons = np.concatenate(SessionsList[sess].neurons_per_layer[layer,cat_pair,:],axis=0)
+                idxs, counts = np.unique(neurons,return_counts=True)
+                generalization_neurons_per_catpair[layer,cat_pair] = idxs[counts==4] ## neurons that are selected in all training pairs
+        overall_gen_neurons[0] = np.unique(np.concatenate(generalization_neurons_per_catpair[0,:],axis=0)) #unique neurons that appear for all the training pair textures, for all the category pairs
+        overall_gen_neurons[1] = np.unique(np.concatenate(generalization_neurons_per_catpair[1,:],axis=0))
+        ovrl_gen_neu_per_session.append(overall_gen_neurons)
+    return ovrl_gen_neu_per_session

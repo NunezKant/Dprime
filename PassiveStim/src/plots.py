@@ -55,3 +55,24 @@ def comparisonplot(data, figsize = (10,10), x="ID", y="Margin", hue="Layer", pai
     plt.legend(handles[:2],labels[:2],title='Layer')
     sns.move_legend(ax, "upper left", bbox_to_anchor=(1, 1))
     sns.despine()
+
+def neurondensity(Sessions,ovrl_gen_neu_per_session,figsize=(19,8)):
+    from matplotlib.offsetbox import AnchoredText
+    layers = 2
+    sessions = len(Sessions)
+    f, axs = plt.subplots(layers, sessions, figsize=figsize)
+    for layer in range(layers):
+        for ix, sess in enumerate(Sessions):
+            mask = ovrl_gen_neu_per_session[ix][layer]
+            sns.kdeplot(x=sess.xpos[mask], y=-sess.ypos[mask], fill=True, cmap="rocket", levels=100, ax = axs[layer,ix])
+            axs[layer,ix].set_xticks([])
+            axs[layer,ix].set_yticks([])
+            anchored_text = AnchoredText(f"n = {len(mask)}", loc=4)
+            axs[layer,ix].add_artist(anchored_text)
+            if layer == 0:
+                axs[layer,ix].set_title(f"{sess.name}")
+    pad = 5 
+    for ax, row in zip(axs[:,0], ["layer 1", "layer 2/3"]):
+        ax.annotate(row, xy=(0, 0.5), xytext=(-ax.yaxis.labelpad - pad, 0),
+                    xycoords=ax.yaxis.label, textcoords='offset points',
+                    size=14, ha='right', va='center')
