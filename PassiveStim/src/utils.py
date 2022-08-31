@@ -848,7 +848,7 @@ def get_generalization_neurons(SessionsList, n_pairs=28, n_layers=2):
         overall_gen_neurons = np.empty((n_layers), dtype=object)
         for cat_pair in range(n_pairs):
             for layer in range(n_layers):
-                neurons = np.concatenate(SessionsList[sess].neurons_per_layer[layer,cat_pair,:],axis=0)
+                neurons = np.concatenate(SessionsList[sess].dprime_neurons_per_layer[layer,cat_pair,:],axis=0)
                 idxs, counts = np.unique(neurons,return_counts=True)
                 generalization_neurons_per_catpair[layer,cat_pair] = idxs[counts==4] ## neurons that are selected in all training pairs
         overall_gen_neurons[0] = np.unique(np.concatenate(generalization_neurons_per_catpair[0,:],axis=0)) #unique neurons that appear for all the training pair textures, for all the category pairs

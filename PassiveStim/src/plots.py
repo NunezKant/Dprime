@@ -64,7 +64,8 @@ def neurondensity(Sessions,ovrl_gen_neu_per_session,figsize=(19,8)):
     for layer in range(layers):
         for ix, sess in enumerate(Sessions):
             mask = ovrl_gen_neu_per_session[ix][layer]
-            sns.kdeplot(x=sess.xpos[mask], y=-sess.ypos[mask], fill=True, cmap="rocket", levels=100, ax = axs[layer,ix])
+            axs[layer,ix].scatter(sess.xpos,-sess.ypos, s=0.05, alpha=0.5)
+            sns.kdeplot(x=sess.xpos[mask], y=-sess.ypos[mask], fill=True, cmap="rocket", levels=100, alpha=0.3, ax = axs[layer,ix])
             axs[layer,ix].set_xticks([])
             axs[layer,ix].set_yticks([])
             anchored_text = AnchoredText(f"n = {len(mask)}", loc=4)
