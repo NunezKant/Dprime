@@ -698,7 +698,15 @@ def get_generalization_margings(spops, n_pairs = 28, n_textures = 4):
             margins = spops[pair,train_tex][0] - spops[pair,train_tex][1]
             margins = np.round(margins,4)
             train_marging = margins[train_tex]
-            margin_ratio = margins/train_marging
+            if train_marging == 0:
+                margin_ratio = np.zeros(4)
+                margin_ratio[train_tex] = 1
+            elif train_marging < 0:
+                margin_ratio = margins/train_marging
+                margin_ratio = np.where(margin_ratio<0,margin_ratio,margin_ratio*-1)
+                margin_ratio[train_tex] = 1
+            else:
+                margin_ratio = margins/train_marging
             generalization_margings[pair,train_tex] = margin_ratio
     return generalization_margings
 
@@ -758,7 +766,7 @@ def PairwiseDprimeDecoder(neurons_atframes, stim_idx, iplane, cats, n_categories
                 neurons_abvtresh_ = (dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane >= 10) #Dprime threshold
                 neurons_blwtresh_ = (-dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane >= 10)
             #print(f"neurons abv: {(neurons_abvtresh_).sum()} & blw: {(neurons_blwtresh_).sum()} thresh")
-            dprime_neurons = np.concatenate([np.where(neurons_abvtresh_==1)[0],np.where(neurons_blwtresh_==1)[0]])
+            dprime_neurons = np.concatenate([np.where(neurons_abvtresh_==1)[0], np.where(neurons_blwtresh_==1)[0]])
             spop_ = Xtest_with_var[:, neurons_abvtresh_, :].mean(1) - Xtest_with_var[:,neurons_blwtresh_, :].mean(1)
             #scoring
             if avg_reps:
@@ -837,21 +845,18 @@ def add_sessions(Sessions,exp_db,frames_per_folder_idx, block_list, dual_plane=T
         Sessions.append(session)
     return Sessions
 
-def get_generalization_neurons(SessionsList, n_pairs=28, n_layers=2):
-    """
-    Gets neurons that got selected by dprimedecoder regardless the training pair and the category pair
-    """
-    n_sesions = len(SessionsList)
-    ovrl_gen_neu_per_session = []
-    generalization_neurons_per_catpair = np.empty((n_layers,n_pairs), dtype=object)
-    for sess in range(n_sesions):
-        overall_gen_neurons = np.empty((n_layers), dtype=object)
-        for cat_pair in range(n_pairs):
-            for layer in range(n_layers):
-                neurons = np.concatenate(SessionsList[sess].dprime_neurons_per_layer[layer,cat_pair,:],axis=0)
-                idxs, counts = np.unique(neurons,return_counts=True)
-                generalization_neurons_per_catpair[layer,cat_pair] = idxs[counts==4] ## neurons that are selected in all training pairs
-        overall_gen_neurons[0] = np.unique(np.concatenate(generalization_neurons_per_catpair[0,:],axis=0)) #unique neurons that appear for all the training pair textures, for all the category pairs
-        overall_gen_neurons[1] = np.unique(np.concatenate(generalization_neurons_per_catpair[1,:],axis=0))
-        ovrl_gen_neu_per_session.append(overall_gen_neurons)
-    return ovrl_gen_neu_per_session
+def get_generalization_neurons_persess(Sessions, n_pairs=28, n_layers=2):
+    gen_neu_per_session_bin = []
+    gen_neu_per_session_idx = []
+    for sess in Sessions:
+        gen_neurons_bin = np.zeros((len(sess.xpos), n_layers, n_pairs))
+        gen_neurons_idxs = np.empty((n_layers,n_pairs), dtype=object)
+        for layer in range(n_layers):
+            for pair in range(n_pairs):
+                gen_neun_pair, neu_counts = np.unique(np.concatenate(sess.dprime_neurons_per_layer[layer,pair],axis=0), return_counts=True)
+                gen_neun_pair = gen_neun_pair[neu_counts==4]
+                gen_neurons_bin[gen_neun_pair,layer,pair] = 1
+                gen_neurons_idxs[layer,pair] = gen_neun_pair
+        gen_neu_per_session_idx.append(gen_neurons_idxs)
+        gen_neu_per_session_bin.append(gen_neurons_bin)
+    return gen_neu_per_session_idx, gen_neu_per_session_bin
