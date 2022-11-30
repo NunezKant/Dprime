@@ -228,7 +228,7 @@ def get_tuned_neurons(neurons_atframes, subset_stim):
         (2, len(unique_stimuli), neurons_atframes.shape[0]), "float32"
     )
     k = 0
-    s2 = np.zeros((2, len(unique_stimuli), neurons_atframes.shape[0]), "float32")
+    ss = np.zeros((2, len(unique_stimuli), neurons_atframes.shape[0]), "float32")
     for stim in unique_stimuli:
         ix = np.where(subset_stim == stim)[0]
         if len(ix) >= 2:
@@ -729,7 +729,7 @@ def categorypairs_parser(cat_dict,pairs):
         category_pairs.append(f"{cat_dict[str(pair[0])]}/{cat_dict[str(pair[1])]}")
     return category_pairs
 
-def PairwiseDprimeDecoder(neurons_atframes, stim_idx, iplane, cats, n_categories = 8, n_samples = 4, layer = 1 , avg_reps = False):
+def PairwiseDprimeDecoder(neurons_atframes, stim_idx, iplane, cats, n_categories = 8, n_samples = 4, layer = 1 , avg_reps = False, method = 'dprime'):
     pairs = list(combinations(np.arange(n_categories), 2)) 
     train_textures = np.arange(n_samples)
     categories_dict = {
@@ -759,15 +759,29 @@ def PairwiseDprimeDecoder(neurons_atframes, stim_idx, iplane, cats, n_categories
         dprime_ = mean_diff/avg_sd
         #print("*************TRAINING**************")
         for train_texture in train_textures:
-            if layer == 2: 
-                neurons_abvtresh_ = (dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane < 10) #Dprime threshold
-                neurons_blwtresh_ = (-dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane < 10)
-            elif layer == 1:
-                neurons_abvtresh_ = (dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane >= 10) #Dprime threshold
-                neurons_blwtresh_ = (-dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane >= 10)
-            #print(f"neurons abv: {(neurons_abvtresh_).sum()} & blw: {(neurons_blwtresh_).sum()} thresh")
-            dprime_neurons = np.concatenate([np.where(neurons_abvtresh_==1)[0], np.where(neurons_blwtresh_==1)[0]])
-            spop_ = Xtest_with_var[:, neurons_abvtresh_, :].mean(1) - Xtest_with_var[:,neurons_blwtresh_, :].mean(1)
+            if method == 'dprime':
+                if layer == 2: 
+                    neurons_abvtresh_ = (dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane < 10) #Dprime threshold
+                    neurons_blwtresh_ = (-dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane < 10)
+                elif layer == 1:
+                    neurons_abvtresh_ = (dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane >= 10) #Dprime threshold
+                    neurons_blwtresh_ = (-dprime_[train_texture] > 0.5) * (Xtrain_varneurons_iplane >= 10)
+                dprime_neurons = np.concatenate([np.where(neurons_abvtresh_==1)[0], np.where(neurons_blwtresh_==1)[0]])
+                spop_ = Xtest_with_var[:, neurons_abvtresh_, :].mean(1) - Xtest_with_var[:,neurons_blwtresh_, :].mean(1)
+                #print(f"neurons abv: {(neurons_abvtresh_).sum()} & blw: {(neurons_blwtresh_).sum()} thresh")
+            elif method == 'top':
+                trained_dprime = dprime_[train_texture]
+                n = int(np.ceil(len(trained_dprime)*0.30)) 
+                if layer == 2: 
+                    neurons_abvtresh_ = trained_dprime[Xtrain_varneurons_iplane < 10].argsort()[::-1][:n]
+                    neurons_blwtresh_ = trained_dprime[Xtrain_varneurons_iplane < 10].argsort()[:n]
+                elif layer == 1:
+                    neurons_abvtresh_ = trained_dprime[Xtrain_varneurons_iplane >= 10].argsort()[::-1][:n]
+                    neurons_blwtresh_ = trained_dprime[Xtrain_varneurons_iplane >= 10].argsort()[:n]
+                spop_ = Xtest_with_var[:, neurons_abvtresh_, :].mean(1) - Xtest_with_var[:,neurons_blwtresh_, :].mean(1)
+                dprime_neurons = np.concatenate([neurons_abvtresh_,neurons_blwtresh_])
+            else:
+                raise ValueError("Method not implemented")
             #scoring
             if avg_reps:
                 spop_avg = spop_.mean(-1)
@@ -775,12 +789,13 @@ def PairwiseDprimeDecoder(neurons_atframes, stim_idx, iplane, cats, n_categories
             else:
                 s = spop_.reshape(2,-1)
             spops[ix_pair,train_texture] = s
+            selected_neurons[ix_pair,train_texture] = dprime_neurons
             pred = s[0]>s[1]
             y = np.ones(s.shape[1])
             score_ = accuracy_score(y, pred) * 100
             #print(f"training pair: {train_texture}, accuracy: {score_}")
             accurracy.append(score_)
-            selected_neurons[ix_pair,train_texture] = dprime_neurons
+            
     accurracy = np.array(accurracy).reshape(len(pairs),n_samples)
     return accurracy, pairs, spops, categories_dict, selected_neurons
 
